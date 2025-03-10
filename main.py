@@ -341,6 +341,9 @@ async def process_frame(frame_data: FrameData):
             elif label_lower == "crosswalk":
                 add_alert(alerts, "Crosswalk ahead!")
 
+    BOUNDARY_WARNING_THRESHOLD = 0.2  # Warn when within 20% of sidewalk width from edge
+
+# Modify the user position indicator and guidance section in process_frame
     # Add user position indicator and sidewalk guidance
     if boundaries:
         left_boundary, right_boundary = boundaries
@@ -352,11 +355,26 @@ async def process_frame(frame_data: FrameData):
         position_percent = ((user_point[0] - left_boundary) / max(1, sidewalk_width)) * 100
         position_percent = max(0, min(100, position_percent))  # Clamp to 0-100%
         
-        # Determine if user is off-course
+        # Determine if user is off-course or approaching boundary
         off_sidewalk = user_point[0] < left_boundary or user_point[0] > right_boundary
         
+        # Calculate distance from boundaries as percentage of sidewalk width
+        distance_from_left = (user_point[0] - left_boundary) / max(1, sidewalk_width)
+        distance_from_right = (right_boundary - user_point[0]) / max(1, sidewalk_width)
+        
+        # Check if user is in warning zone (close to boundary)
+        near_left_boundary = 0 <= distance_from_left < BOUNDARY_WARNING_THRESHOLD
+        near_right_boundary = 0 <= distance_from_right < BOUNDARY_WARNING_THRESHOLD
+        
+        # Determine indicator color based on position
+        if off_sidewalk:
+            indicator_color = (0, 0, 255)  # Red for off sidewalk
+        elif near_left_boundary or near_right_boundary:
+            indicator_color = (0, 165, 255)  # Orange for near boundary
+        else:
+            indicator_color = (0, 255, 255)  # Yellow for safe
+        
         # Draw an attractive user position indicator (triangle pointing up)
-        indicator_color = (0, 0, 255) if off_sidewalk else (0, 255, 255)
         triangle_pts = np.array([
             [user_point[0], user_point[1] - 20],
             [user_point[0] - 10, user_point[1]],
@@ -372,9 +390,10 @@ async def process_frame(frame_data: FrameData):
         cv2.putText(processed_img, position_text, (width//2 - 80, height - 40),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
-        # Add directional guidance if off-course
+        # Add directional guidance based on position
         if off_sidewalk:
-            add_alert(alerts, "WARNING: You are going off the sidewalk!")
+            # Critical alert for off sidewalk
+            add_alert(alerts, "WARNING: You are off the sidewalk!")
             
             if user_point[0] < left_boundary:
                 cv2.putText(processed_img, "MOVE RIGHT", (width//2 - 80, height - 80),
@@ -382,6 +401,16 @@ async def process_frame(frame_data: FrameData):
             else:
                 cv2.putText(processed_img, "MOVE LEFT", (width//2 - 80, height - 80),
                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+        elif near_left_boundary:
+            # Warning alert for approaching left boundary
+            add_alert(alerts, "Caution: Getting close to left edge")
+            cv2.putText(processed_img, "DRIFT RIGHT", (width//2 - 80, height - 80),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
+        elif near_right_boundary:
+            # Warning alert for approaching right boundary
+            add_alert(alerts, "Caution: Getting close to right edge")
+            cv2.putText(processed_img, "DRIFT LEFT", (width//2 - 80, height - 80),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
 
     # Encode the processed image to base64
     _, buffer = cv2.imencode('.jpg', processed_img)
