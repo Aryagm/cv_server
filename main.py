@@ -43,25 +43,12 @@ def add_alert(alerts, alert):
 class FrameData(BaseModel):
     image: str
 
-position_history = deque(maxlen=10)  # Track user position for stability
-
-
 def detect_sidewalk_boundaries(image):
-    """Detect sidewalk boundaries using edge detection and Hough Transform with boundary tracking."""
-    height, width = image.shape[:2]
-    output = image.copy()
-    center_x = width / 2
-    
-    # Store current position for movement detection
-    current_position = center_x
-    position_history.append(current_position)
-    
-    # Process the image to find edges
+    """Detect sidewalk boundaries using edge detection and Hough Transform."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (7, 7), 0)
-    edges = cv2.Canny(blur, 20, 80)
-    
-    # Create mask to focus on sidewalk region
+    edges = cv2.Canny(blur, 30, 100)
+    height, width = edges.shape
     mask = np.zeros_like(edges)
     polygon = np.array([[
         (int(width * 0.1), height),
@@ -71,175 +58,40 @@ def detect_sidewalk_boundaries(image):
     ]], np.int32)
     cv2.fillPoly(mask, polygon, 255)
     masked_edges = cv2.bitwise_and(edges, mask)
-    
-    # Line detection with HoughLinesP
-    lines = cv2.HoughLinesP(
-        masked_edges, 
-        rho=1, 
-        theta=np.pi/180, 
-        threshold=30,
-        minLineLength=50,  # Longer lines for better stability
-        maxLineGap=100
-    )
-    
-    # Debug image to visualize detected lines
-    line_image = np.zeros_like(image)
-    
-    # Collect points for left and right boundaries
+    lines = cv2.HoughLinesP(masked_edges, rho=1, theta=np.pi / 180,
+                            threshold=40, minLineLength=60, maxLineGap=80)
+    line_image = np.copy(image) * 0
     left_points = []
     right_points = []
-    threshold_y = int(height * 0.8)  # Focus on bottom 20% of image for stability
-    
+    center_x = width / 2
+    threshold_y = int(height * 0.8)
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line[0]
-            
-            # Skip nearly horizontal lines
-            if abs(y2 - y1) < 5:
-                continue
-            
-            # Calculate slope    
             slope = (y2 - y1) / (x2 - x1 + 1e-6)
-            
-            # Only use lines with reasonable slope
             if abs(slope) > 0.3:
-                # Draw detected lines in debug image
-                cv2.line(line_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                
-                # Collect points from bottom part of image
+                cv2.line(line_image, (x1, y1), (x2, y2), (0, 255, 0), 5)
                 if y1 > threshold_y:
                     if x1 < center_x:
                         left_points.append(x1)
                     else:
                         right_points.append(x1)
-                        
                 if y2 > threshold_y:
                     if x2 < center_x:
                         left_points.append(x2)
                     else:
                         right_points.append(x2)
-    
-    # Calculate boundaries based on detected points
-    left_boundary = None
-    right_boundary = None
-    
-    # Use median for robustness against outliers
-    if left_points:
-        left_std = np.std(left_points) if len(left_points) > 1 else width
-        # Filter out outliers if we have enough points
-        if len(left_points) > 3 and left_std < width * 0.2:
-            sorted_left = np.sort(left_points)
-            q1 = np.percentile(sorted_left, 25)
-            q3 = np.percentile(sorted_left, 75)
-            iqr = q3 - q1
-            left_filtered = [p for p in left_points if q1 - 1.5*iqr <= p <= q3 + 1.5*iqr]
-            if left_filtered:
-                left_boundary = int(np.median(left_filtered))
-            else:
-                left_boundary = int(np.median(left_points))
-        else:
-            left_boundary = int(np.median(left_points))
-    
-    if right_points:
-        right_std = np.std(right_points) if len(right_points) > 1 else width
-        # Filter out outliers if we have enough points
-        if len(right_points) > 3 and right_std < width * 0.2:
-            sorted_right = np.sort(right_points)
-            q1 = np.percentile(sorted_right, 25)
-            q3 = np.percentile(sorted_right, 75)
-            iqr = q3 - q1
-            right_filtered = [p for p in right_points if q1 - 1.5*iqr <= p <= q3 + 1.5*iqr]
-            if right_filtered:
-                right_boundary = int(np.median(right_filtered))
-            else:
-                right_boundary = int(np.median(right_points))
-        else:
-            right_boundary = int(np.median(right_points))
-    
-    # Apply default boundaries if detection failed
-    if left_boundary is None:
-        left_boundary = int(width * 0.3)
-    if right_boundary is None:
-        right_boundary = int(width * 0.7)
-    
-    # Ensure left is to the left of right
-    if left_boundary > right_boundary:
-        left_boundary, right_boundary = right_boundary, left_boundary
-    
-    # Add to boundary history for smoothing
-    boundary_history.append((left_boundary, right_boundary))
-    
-    # Apply temporal smoothing with weighted average
-    if len(boundary_history) > 1:
-        weights = [0.1, 0.15, 0.25, 0.5][:len(boundary_history)]
-        weights = [w/sum(weights) for w in weights]
-        
-        # Calculate weighted average
-        left_avg = int(sum(b[0] * w for b, w in zip(boundary_history, reversed(weights))))
-        right_avg = int(sum(b[1] * w for b, w in zip(boundary_history, reversed(weights))))
-        
-        # Use smoothed values
-        left_boundary = left_avg
-        right_boundary = right_avg
-    
-    # Enforce reasonable sidewalk width constraints
-    sidewalk_width = right_boundary - left_boundary
-    if sidewalk_width < width * 0.25:  # Too narrow
-        center = (left_boundary + right_boundary) // 2
-        left_boundary = center - int(width * 0.15)
-        right_boundary = center + int(width * 0.15)
-    elif sidewalk_width > width * 0.75:  # Too wide
-        center = (left_boundary + right_boundary) // 2
-        left_boundary = center - int(width * 0.3)
-        right_boundary = center + int(width * 0.3)
-    
-    # Define the vanishing point for perspective
-    vanishing_y = int(height * 0.6)
-    vanishing_x = int(width * 0.5)
-    
-    # Calculate the top points (converging toward vanishing point)
-    left_top_x = int(left_boundary * 0.8 + vanishing_x * 0.2)
-    right_top_x = int(right_boundary * 0.8 + vanishing_x * 0.2)
-    
-    # Create sidewalk visualization
-    overlay = output.copy()
-    
-    # Create a polygon for the detected sidewalk region
-    sidewalk_poly = np.array([
-        [(left_boundary, height), 
-         (left_top_x, vanishing_y),
-         (right_top_x, vanishing_y),
-         (right_boundary, height)]
-    ], dtype=np.int32)
-    
-    # Draw filled sidewalk area with semi-transparent green
-    cv2.fillPoly(overlay, sidewalk_poly, (0, 180, 0))
-    
-    # Add distance markers with perspective effect
-    for i in range(1, 6):
-        # Calculate y-position with perspective effect
-        y_pos = height - int((height - vanishing_y) * i / 5)
-        
-        # Calculate x-positions with perspective effect
-        ratio = i / 5.0
-        left_x = int(left_boundary * (1.0 - ratio) + left_top_x * ratio)
-        right_x = int(right_boundary * (1.0 - ratio) + right_top_x * ratio)
-        
-        # Draw perspective-correct distance marker
-        cv2.line(overlay, (left_x, y_pos), (right_x, y_pos), 
-                 (255, 255, 255), max(1, 3 - i//2))
-    
-    # Add the overlay with transparency
-    cv2.addWeighted(overlay, 0.4, output, 0.6, 0, output)
-    
-    # Draw sidewalk boundary lines with attractive style
-    cv2.line(output, (left_boundary, height), (left_top_x, vanishing_y), (0, 0, 255), 3)
-    cv2.line(output, (right_boundary, height), (right_top_x, vanishing_y), (0, 0, 255), 3)
-    
-    # Add detected line debug overlay
-    cv2.addWeighted(line_image, 0.3, output, 1.0, 0, output)
-    
-    return output, (left_boundary, right_boundary)
+    boundaries = None
+    if left_points and right_points:
+        left_boundary = int(np.median(left_points))
+        right_boundary = int(np.median(right_points))
+        boundaries = (left_boundary, right_boundary)
+    output = cv2.addWeighted(image, 0.8, line_image, 1, 1)
+    if boundaries is not None:
+        left_boundary, right_boundary = boundaries
+        cv2.line(output, (left_boundary, height), (left_boundary, int(height * 0.6)), (255, 0, 0), 2)
+        cv2.line(output, (right_boundary, height), (right_boundary, int(height * 0.6)), (255, 0, 0), 2)
+    return output, boundaries
 
 
 @app.post("/process_frame/")
