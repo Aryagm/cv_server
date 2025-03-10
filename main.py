@@ -43,54 +43,246 @@ def add_alert(alerts, alert):
 class FrameData(BaseModel):
     image: str
 
+position_history = deque(maxlen=10)  # Track user position for stability
+
 def detect_sidewalk_boundaries(image):
-    """Detect sidewalk boundaries using edge detection and Hough Transform."""
+    """Detect sidewalk boundaries with improved side-view support."""
+    height, width = image.shape[:2]
+    center_x = width / 2
+    
+    # Store current position for movement detection
+    current_position = center_x
+    position_history.append(current_position)
+    
+    # Process the image to find edges with optimized parameters
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (7, 7), 0)
-    edges = cv2.Canny(blur, 30, 100)
-    height, width = edges.shape
+    edges = cv2.Canny(blur, 20, 80)  # Lower thresholds to detect more subtle edges
+    
+    # Create wider mask to capture sidewalk even when off-center
     mask = np.zeros_like(edges)
     polygon = np.array([[
-        (int(width * 0.1), height),
-        (int(width * 0.9), height),
-        (int(width * 0.6), int(height * 0.6)),
-        (int(width * 0.4), int(height * 0.6))
+        (0, height),  # Full width at bottom
+        (width, height),
+        (int(width * 0.7), int(height * 0.6)),  # Asymmetric top to handle side views
+        (int(width * 0.3), int(height * 0.6))
     ]], np.int32)
     cv2.fillPoly(mask, polygon, 255)
     masked_edges = cv2.bitwise_and(edges, mask)
-    lines = cv2.HoughLinesP(masked_edges, rho=1, theta=np.pi / 180,
-                            threshold=40, minLineLength=60, maxLineGap=80)
-    line_image = np.copy(image) * 0
-    left_points = []
-    right_points = []
-    center_x = width / 2
-    threshold_y = int(height * 0.8)
+    
+    # Line detection with parameters optimized for side views
+    lines = cv2.HoughLinesP(
+        masked_edges, 
+        rho=1, 
+        theta=np.pi/180, 
+        threshold=30,  # Lower threshold to detect more lines
+        minLineLength=50,
+        maxLineGap=100
+    )
+    
+    # Create debug image for visualization
+    line_image = np.zeros_like(image)
+    
+    # Initialize collections for line segments
+    left_candidates = []  # Will store (x, slope) pairs
+    right_candidates = []  # Will store (x, slope) pairs
+    
+    # Process detected lines
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line[0]
+            
+            # Skip nearly horizontal lines
+            if abs(y2 - y1) < 10:
+                continue
+                
+            # Calculate slope
             slope = (y2 - y1) / (x2 - x1 + 1e-6)
-            if abs(slope) > 0.3:
-                cv2.line(line_image, (x1, y1), (x2, y2), (0, 255, 0), 5)
-                if y1 > threshold_y:
-                    if x1 < center_x:
-                        left_points.append(x1)
+            
+            # Only use lines with reasonable slope for sidewalk boundaries
+            if 0.3 < abs(slope) < 5:
+                # Project line to bottom of image for better classification
+                if y1 != y2:  # Avoid division by zero
+                    x_bottom = int(x1 + (height - y1) * (x2 - x1) / (y2 - y1))
+                    
+                    # Classify as left/right based on slope direction, not just position
+                    if slope > 0:  # Rising from left to right -> likely a left boundary
+                        left_candidates.append((x_bottom, slope))
+                        cv2.line(line_image, (x1, y1), (x2, y2), (0, 255, 0), 3)
+                    elif slope < 0:  # Falling from left to right -> likely a right boundary
+                        right_candidates.append((x_bottom, slope))
+                        cv2.line(line_image, (x1, y1), (x2, y2), (0, 0, 255), 3)
+    
+    # Find most consistent boundary positions using clustering
+    left_boundary = None
+    right_boundary = None
+    
+    # Process left candidates
+    if left_candidates:
+        # Sort by x position
+        left_candidates.sort()
+        
+        # Check if we have clusters of lines
+        if len(left_candidates) >= 3:
+            # Extract x positions
+            left_x = [p[0] for p in left_candidates]
+            
+            # Use DBSCAN clustering to find the most consistent group
+            from sklearn.cluster import DBSCAN
+            try:
+                # Simple clustering - can be replaced with manual approach if needed
+                clustering = DBSCAN(eps=width*0.1, min_samples=2).fit(np.array(left_x).reshape(-1, 1))
+                if len(set(clustering.labels_)) > 1:  # If we found clusters
+                    # Find the largest cluster
+                    largest_cluster = max(set(clustering.labels_), key=list(clustering.labels_).count)
+                    if largest_cluster != -1:  # -1 is noise
+                        cluster_points = [left_x[i] for i, label in enumerate(clustering.labels_) if label == largest_cluster]
+                        left_boundary = int(np.median(cluster_points))
                     else:
-                        right_points.append(x1)
-                if y2 > threshold_y:
-                    if x2 < center_x:
-                        left_points.append(x2)
+                        left_boundary = int(np.median(left_x))
+                else:
+                    left_boundary = int(np.median(left_x))
+            except:
+                # Fallback if clustering fails
+                left_boundary = int(np.median(left_x))
+        else:
+            # Just take the median if few points
+            left_boundary = int(np.median([p[0] for p in left_candidates]))
+    
+    # Process right candidates
+    if right_candidates:
+        # Sort by x position
+        right_candidates.sort()
+        
+        # Check if we have clusters of lines
+        if len(right_candidates) >= 3:
+            # Extract x positions
+            right_x = [p[0] for p in right_candidates]
+            
+            # Use DBSCAN clustering to find the most consistent group
+            from sklearn.cluster import DBSCAN
+            try:
+                # Simple clustering - can be replaced with manual approach if needed
+                clustering = DBSCAN(eps=width*0.1, min_samples=2).fit(np.array(right_x).reshape(-1, 1))
+                if len(set(clustering.labels_)) > 1:  # If we found clusters
+                    # Find the largest cluster
+                    largest_cluster = max(set(clustering.labels_), key=list(clustering.labels_).count)
+                    if largest_cluster != -1:  # -1 is noise
+                        cluster_points = [right_x[i] for i, label in enumerate(clustering.labels_) if label == largest_cluster]
+                        right_boundary = int(np.median(cluster_points))
                     else:
-                        right_points.append(x2)
-    boundaries = None
-    if left_points and right_points:
-        left_boundary = int(np.median(left_points))
-        right_boundary = int(np.median(right_points))
-        boundaries = (left_boundary, right_boundary)
-    output = cv2.addWeighted(image, 0.8, line_image, 1, 1)
-    if boundaries is not None:
-        left_boundary, right_boundary = boundaries
-        cv2.line(output, (left_boundary, height), (left_boundary, int(height * 0.6)), (255, 0, 0), 2)
-        cv2.line(output, (right_boundary, height), (right_boundary, int(height * 0.6)), (255, 0, 0), 2)
+                        right_boundary = int(np.median(right_x))
+                else:
+                    right_boundary = int(np.median(right_x))
+            except:
+                # Fallback if clustering fails
+                right_boundary = int(np.median(right_x))
+        else:
+            # Just take the median if few points
+            right_boundary = int(np.median([p[0] for p in right_candidates]))
+    
+    # Handle cases where only one boundary is detected
+    if left_boundary is not None and right_boundary is None:
+        # Estimate right boundary based on typical sidewalk width
+        right_boundary = min(width - 20, left_boundary + int(width * 0.3))
+    elif left_boundary is None and right_boundary is not None:
+        # Estimate left boundary based on typical sidewalk width
+        left_boundary = max(20, right_boundary - int(width * 0.3))
+    elif left_boundary is None and right_boundary is None:
+        # No boundaries detected, use default positions
+        left_boundary = int(width * 0.35)
+        right_boundary = int(width * 0.65)
+    
+    # Ensure boundaries are within image
+    left_boundary = max(0, min(left_boundary, width-1))
+    right_boundary = max(0, min(right_boundary, width-1))
+    
+    # Ensure left is to the left of right
+    if left_boundary > right_boundary:
+        left_boundary, right_boundary = right_boundary, left_boundary
+    
+    # Handle unreasonably narrow or wide sidewalks
+    sidewalk_width = right_boundary - left_boundary
+    if sidewalk_width < width * 0.15:  # Too narrow
+        midpoint = (left_boundary + right_boundary) // 2
+        left_boundary = max(0, midpoint - int(width * 0.1))
+        right_boundary = min(width, midpoint + int(width * 0.1))
+    elif sidewalk_width > width * 0.6:  # Too wide
+        midpoint = (left_boundary + right_boundary) // 2
+        left_boundary = max(0, midpoint - int(width * 0.25))
+        right_boundary = min(width, midpoint + int(width * 0.25))
+    
+    # Add to boundary history for temporal smoothing
+    boundary_history.append((left_boundary, right_boundary))
+    
+    # Apply temporal smoothing for stability
+    if len(boundary_history) > 2:
+        # More weight to recent frames
+        weights = [0.2, 0.3, 0.5][:len(boundary_history)]
+        weights = [w/sum(weights) for w in weights]
+        
+        # Calculate weighted average
+        left_avg = int(sum(b[0] * w for b, w in zip(boundary_history, reversed(weights))))
+        right_avg = int(sum(b[1] * w for b, w in zip(boundary_history, reversed(weights))))
+        
+        # Only use smoothed values if they're not drastically different
+        if abs(left_avg - left_boundary) < width * 0.1:
+            left_boundary = left_avg
+        if abs(right_avg - right_boundary) < width * 0.1:
+            right_boundary = right_avg
+    
+    # Define visualization properties
+    vanishing_y = int(height * 0.6)
+    
+    # Calculate vanishing point (should be between boundaries, weighted toward center)
+    vanishing_x = int((left_boundary + right_boundary) / 2 * 0.7 + width / 2 * 0.3)
+    vanishing_x = max(min(vanishing_x, width-20), 20)  # Keep within image
+    
+    # Create a more robust sidewalk visualization
+    output = image.copy()
+    overlay = output.copy()
+    
+    # Create the sidewalk polygon with perspective
+    sidewalk_points = np.array([
+        [left_boundary, height],
+        [int(left_boundary * 0.7 + vanishing_x * 0.3), vanishing_y],
+        [int(right_boundary * 0.7 + vanishing_x * 0.3), vanishing_y],
+        [right_boundary, height]
+    ], np.int32)
+    
+    # Draw filled sidewalk with green overlay
+    cv2.fillPoly(overlay, [sidewalk_points], (0, 150, 0))
+    
+    # Add distance markers with perspective effect
+    for i in range(1, 6):
+        # Calculate positions with perspective
+        y_pos = height - int((height - vanishing_y) * i / 5)
+        ratio = i / 5.0
+        left_x = int(left_boundary * (1.0 - ratio) + (left_boundary * 0.7 + vanishing_x * 0.3) * ratio)
+        right_x = int(right_boundary * (1.0 - ratio) + (right_boundary * 0.7 + vanishing_x * 0.3) * ratio)
+        
+        # Draw the distance marker line
+        cv2.line(overlay, (left_x, y_pos), (right_x, y_pos), 
+                 (255, 255, 255), max(1, 3 - i//2))
+    
+    # Add overlay with transparency
+    cv2.addWeighted(overlay, 0.4, output, 0.6, 0, output)
+    
+    # Draw boundary lines
+    cv2.line(output, 
+             (left_boundary, height), 
+             (int(left_boundary * 0.7 + vanishing_x * 0.3), vanishing_y), 
+             (0, 0, 255), 3)
+    cv2.line(output, 
+             (right_boundary, height), 
+             (int(right_boundary * 0.7 + vanishing_x * 0.3), vanishing_y), 
+             (0, 0, 255), 3)
+    
+    # Add debug overlay of detected lines
+    cv2.addWeighted(line_image, 0.3, output, 1.0, 0, output)
+    
+    # Add boundaries
+    boundaries = (left_boundary, right_boundary)
     return output, boundaries
 
 
