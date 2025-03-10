@@ -47,7 +47,7 @@ position_history = deque(maxlen=10)  # Track user position for stability
 
 
 def detect_sidewalk_boundaries(image):
-    """Detect sidewalk boundaries using a point-based approach for more natural curves."""
+    """Detect sidewalk boundaries with enhanced curve detection capabilities."""
     height, width = image.shape[:2]
     output = image.copy()
     center_x = width / 2
@@ -56,205 +56,261 @@ def detect_sidewalk_boundaries(image):
     current_position = center_x
     position_history.append(current_position)
     
-    # Process the image to find edges
+    # Process the image to find edges with parameters for better curve detection
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)  # Smaller kernel for finer details
-    edges = cv2.Canny(blur, 30, 90)  # Slightly higher thresholds for stronger edges
+    blur = cv2.GaussianBlur(gray, (7, 7), 0)  # Larger kernel for smoother curves
+    edges = cv2.Canny(blur, 20, 80)  # Lower thresholds to detect more subtle curves
     
-    # Create mask to focus on sidewalk region
+    # Create mask to focus on sidewalk region - narrower to focus on actual sidewalk
     mask = np.zeros_like(edges)
     polygon = np.array([[
-        (int(width * 0.05), height),  # Wider at bottom
-        (int(width * 0.95), height),
-        (int(width * 0.65), int(height * 0.55)),  # Higher vanishing point
-        (int(width * 0.35), int(height * 0.55))
+        (int(width * 0.1), height),  # Narrower at bottom
+        (int(width * 0.9), height),
+        (int(width * 0.6), int(height * 0.6)),  # Higher vanishing point
+        (int(width * 0.4), int(height * 0.6))
     ]], np.int32)
     cv2.fillPoly(mask, polygon, 255)
     masked_edges = cv2.bitwise_and(edges, mask)
     
-    # Debug visualization for edge detection
+    # Debug visualization
     debug_image = np.zeros((height, width, 3), dtype=np.uint8)
     debug_image[masked_edges > 0] = [0, 255, 255]  # Yellow for edges
     
-    # Line detection with improved parameters
+    # Use multiple y-levels to capture curve points at different heights
+    y_levels = [int(height * (1 - i/10)) for i in range(5)]  # 5 levels from bottom to 50% height
+    left_curve_points = []  # Will store (x,y) points for left curve
+    right_curve_points = []  # Will store (x,y) points for right curve
+    
+    # Line detection with parameters optimized for curves
     lines = cv2.HoughLinesP(
         masked_edges, 
         rho=1, 
         theta=np.pi/180, 
-        threshold=25,  # Lower threshold to detect more lines
-        minLineLength=40,
-        maxLineGap=50
+        threshold=30,  # Higher threshold for more reliable lines
+        minLineLength=30,  # Shorter to capture curve segments
+        maxLineGap=100  # Larger gap to connect curve segments
     )
     
-    # Collect edge points from detected lines
-    left_points = []
-    right_points = []
-    threshold_y = int(height * 0.7)  # Look higher up in the image
-    
+    # Process detected lines
     if lines is not None:
+        # First, extract line segments and classify as left/right
+        left_segments = []
+        right_segments = []
+        
         for line in lines:
             x1, y1, x2, y2 = line[0]
             
             # Skip nearly horizontal lines
-            if abs(y2 - y1) < 10:
+            if abs(y2 - y1) < 15:
                 continue
                 
-            # Calculate slope and intercept for the line
+            # Calculate slope
             slope = (y2 - y1) / (x2 - x1 + 1e-6)
             
-            # Only use lines with reasonable slope
-            if 0.2 < abs(slope) < 10:
-                # Draw detected lines for debugging
-                cv2.line(debug_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                
-                # Project line to bottom of image
-                if y1 != y2:  # Avoid division by zero
-                    bottom_x = int(x1 + (height - y1) * (x2 - x1) / (y2 - y1))
-                    if 0 <= bottom_x < width:  # Ensure point is in frame
-                        if bottom_x < center_x:
-                            left_points.append(bottom_x)
-                        else:
-                            right_points.append(bottom_x)
-                
-                # Also add original line points if they're low enough in the frame
-                if y1 > threshold_y:
-                    if x1 < center_x:
-                        left_points.append(x1)
-                    else:
-                        right_points.append(x1)
-                if y2 > threshold_y:
-                    if x2 < center_x:
-                        left_points.append(x2)
-                    else:
-                        right_points.append(x2)
+            # Only use lines with reasonable slope for sidewalk boundaries
+            if 0.3 < abs(slope) < 8:
+                # Classify as left or right based on position and slope
+                if x1 < center_x or x2 < center_x:
+                    if slope > 0:  # Positive slope for left boundary
+                        left_segments.append(line[0])
+                        cv2.line(debug_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                if x1 > center_x or x2 > center_x:
+                    if slope < 0:  # Negative slope for right boundary
+                        right_segments.append(line[0])
+                        cv2.line(debug_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        
+        # Sample points along each y-level from the line segments
+        for y_level in y_levels:
+            left_x_points = []
+            right_x_points = []
+            
+            # Check intersections with left segments
+            for x1, y1, x2, y2 in left_segments:
+                # If line segment crosses this y-level
+                if (y1 <= y_level <= y2) or (y2 <= y_level <= y1):
+                    # Calculate x at this y-level using line equation
+                    if y2 != y1:  # Avoid division by zero
+                        x = int(x1 + (y_level - y1) * (x2 - x1) / (y2 - y1))
+                        if 0 <= x < center_x:  # Ensure it's on the left side
+                            left_x_points.append(x)
+            
+            # Check intersections with right segments
+            for x1, y1, x2, y2 in right_segments:
+                # If line segment crosses this y-level
+                if (y1 <= y_level <= y2) or (y2 <= y_level <= y1):
+                    # Calculate x at this y-level using line equation
+                    if y2 != y1:  # Avoid division by zero
+                        x = int(x1 + (y_level - y1) * (x2 - x1) / (y2 - y1))
+                        if center_x <= x < width:  # Ensure it's on the right side
+                            right_x_points.append(x)
+            
+            # If we found points at this y-level, add the median to our curve points
+            if left_x_points:
+                left_x = int(np.median(left_x_points))
+                left_curve_points.append((left_x, y_level))
+            
+            if right_x_points:
+                right_x = int(np.median(right_x_points))
+                right_curve_points.append((right_x, y_level))
     
-    # Calculate confidence based on number and consistency of detected points
-    left_confidence = 0
-    right_confidence = 0
-    left_boundary = int(width * 0.3)  # Default values
-    right_boundary = int(width * 0.7)
+    # If we don't have enough curve points, add default points based on assumptions
+    if len(left_curve_points) < 3:
+        left_x = int(width * 0.35)  # Default left boundary
+        left_curve_points = [(left_x, height)]
     
-    if left_points:
-        left_std = np.std(left_points) if len(left_points) > 1 else width
-        left_confidence = min(1.0, len(left_points) / 10.0) * max(0.0, 1.0 - left_std / (width * 0.3))
-        # Use more robust estimator - trim outliers before taking median
-        sorted_left = np.sort(left_points)
-        trim_count = max(0, int(len(sorted_left) * 0.2))  # Trim 20% from each end
-        if len(sorted_left) > trim_count * 2 + 1:
-            trimmed_left = sorted_left[trim_count:-trim_count]
-            left_boundary = int(np.median(trimmed_left))
+    if len(right_curve_points) < 3:
+        right_x = int(width * 0.65)  # Default right boundary
+        right_curve_points = [(right_x, height)]
+    
+    # Sort by y-coordinate (bottom to top)
+    left_curve_points.sort(key=lambda p: -p[1])
+    right_curve_points.sort(key=lambda p: -p[1])
+    
+    # Always ensure we have a point at the bottom
+    if left_curve_points[0][1] != height:
+        if left_curve_points:
+            left_x_bottom = left_curve_points[0][0]
         else:
-            left_boundary = int(np.median(left_points))
+            left_x_bottom = int(width * 0.35)
+        left_curve_points.insert(0, (left_x_bottom, height))
     
-    if right_points:
-        right_std = np.std(right_points) if len(right_points) > 1 else width
-        right_confidence = min(1.0, len(right_points) / 10.0) * max(0.0, 1.0 - right_std / (width * 0.3))
-        # Trim outliers for right side too
-        sorted_right = np.sort(right_points)
-        trim_count = max(0, int(len(sorted_right) * 0.2))
-        if len(sorted_right) > trim_count * 2 + 1:
-            trimmed_right = sorted_right[trim_count:-trim_count]
-            right_boundary = int(np.median(trimmed_right))
+    if right_curve_points[0][1] != height:
+        if right_curve_points:
+            right_x_bottom = right_curve_points[0][0]
         else:
-            right_boundary = int(np.median(right_points))
+            right_x_bottom = int(width * 0.65)
+        right_curve_points.insert(0, (right_x_bottom, height))
     
-    # Ensure left is to the left of right
-    if left_boundary > right_boundary:
-        left_boundary, right_boundary = right_boundary, left_boundary
+    # Get the bottom boundary points (where y=height)
+    left_boundary = left_curve_points[0][0]
+    right_boundary = right_curve_points[0][0]
     
-    # Apply constraints to prevent unreasonable sidewalk widths
-    sidewalk_width = right_boundary - left_boundary
-    if sidewalk_width < width * 0.2:  # Too narrow
-        center = (left_boundary + right_boundary) // 2
-        left_boundary = max(0, center - int(width * 0.15))
-        right_boundary = min(width, center + int(width * 0.15))
-    elif sidewalk_width > width * 0.6:  # Too wide
-        center = (left_boundary + right_boundary) // 2
-        left_boundary = max(0, center - int(width * 0.25))
-        right_boundary = min(width, center + int(width * 0.25))
-    
-    # Add to boundary history for smoothing
+    # Add to boundary history for smoothing - only bottom points
     boundary_history.append((left_boundary, right_boundary))
     
-    # Use a weighted average of recent boundaries for smoothness
+    # Apply smoothing to the boundary points over time
     if len(boundary_history) > 1:
-        # More weight to recent frames, adapted to history length
-        max_weights = [0.1, 0.15, 0.2, 0.25, 0.3]
-        weights = max_weights[-len(boundary_history):]
+        weights = [0.1, 0.2, 0.3, 0.4][:len(boundary_history)]
         weights = [w/sum(weights) for w in weights]
         
-        # Calculate weighted average
+        # Calculate weighted average for bottom points
         left_avg = int(sum(b[0] * w for b, w in zip(boundary_history, reversed(weights))))
         right_avg = int(sum(b[1] * w for b, w in zip(boundary_history, reversed(weights))))
         
-        # Only use the smoothed values if they're not too different from current detection
-        if abs(left_avg - left_boundary) < width * 0.1 and abs(right_avg - right_boundary) < width * 0.1:
-            left_boundary, right_boundary = left_avg, right_avg
+        # Update the bottom points with smoothed values
+        if abs(left_avg - left_boundary) < width * 0.1:
+            left_boundary = left_avg
+            left_curve_points[0] = (left_avg, height)
+        
+        if abs(right_avg - right_boundary) < width * 0.1:
+            right_boundary = right_avg
+            right_curve_points[0] = (right_avg, height)
+    
+    # Adjust curve points to prevent unreasonable sidewalk width
+    sidewalk_width = right_boundary - left_boundary
+    if sidewalk_width < width * 0.2 or sidewalk_width > width * 0.6:
+        center = (left_boundary + right_boundary) // 2
+        left_boundary = max(0, center - int(width * 0.2))
+        right_boundary = min(width, center + int(width * 0.2))
+        
+        # Update bottom points
+        left_curve_points[0] = (left_boundary, height)
+        right_curve_points[0] = (right_boundary, height)
+    
+    # Create a vanishing point for the top of the sidewalk
+    vanishing_y = int(height * 0.6)
+    vanishing_x = int(width * 0.5)
+    
+    # Ensure we have a top point that converges toward the vanishing point
+    if len(left_curve_points) == 1 or left_curve_points[-1][1] > vanishing_y + 40:
+        left_top_x = int(center_x - width * 0.1)
+        left_curve_points.append((left_top_x, vanishing_y))
+    
+    if len(right_curve_points) == 1 or right_curve_points[-1][1] > vanishing_y + 40:
+        right_top_x = int(center_x + width * 0.1)
+        right_curve_points.append((right_top_x, vanishing_y))
+    
+    # Create a smooth polynomial fit for each curve if we have enough points
+    if len(left_curve_points) >= 3:
+        left_x = [p[0] for p in left_curve_points]
+        left_y = [p[1] for p in left_curve_points]
+        # Generate smooth curve with more points
+        smooth_left_y = np.linspace(min(left_y), max(left_y), 10)
+        z = np.polyfit(left_y, left_x, 2)  # Quadratic fit (degree 2)
+        smooth_left_x = np.polyval(z, smooth_left_y)
+        left_curve_points = list(zip(smooth_left_x.astype(int), smooth_left_y.astype(int)))
+    
+    if len(right_curve_points) >= 3:
+        right_x = [p[0] for p in right_curve_points]
+        right_y = [p[1] for p in right_curve_points]
+        # Generate smooth curve with more points
+        smooth_right_y = np.linspace(min(right_y), max(right_y), 10)
+        z = np.polyfit(right_y, right_x, 2)  # Quadratic fit (degree 2)
+        smooth_right_x = np.polyval(z, smooth_right_y)
+        right_curve_points = list(zip(smooth_right_x.astype(int), smooth_right_y.astype(int)))
     
     # Create sidewalk visualization
     overlay = output.copy()
     
-    # Define sidewalk shape with more natural curve
-    vanishing_y = int(height * 0.55)  # Vanishing point height
-    vanishing_x_left = int(center_x - width * 0.1)  # Vanishing point shifts slightly left
-    vanishing_x_right = int(center_x + width * 0.1)
-    
-    # Create curved sidewalk path using bezier-like points
-    sidewalk_left_x = [left_boundary]
-    sidewalk_right_x = [right_boundary]
-    
-    # Generate points along the curve at different y positions
-    for i in range(1, 5):
-        ratio = i / 4.0
-        y_pos = height - ratio * (height - vanishing_y)
-        
-        # Calculate curve points with more natural bending
-        # Left side curves more toward center as we go up
-        left_x = int(left_boundary * (1.0 - ratio) + vanishing_x_left * ratio)
-        
-        # Right side curves more toward center as we go up
-        right_x = int(right_boundary * (1.0 - ratio) + vanishing_x_right * ratio)
-        
-        sidewalk_left_x.append(left_x)
-        sidewalk_right_x.append(right_x)
-    
-    # Create sidewalk polygon points
+    # Create sidewalk polygon from curve points
     sidewalk_points = []
-    for i in range(len(sidewalk_left_x)):
-        y_pos = height - i * (height - vanishing_y) / 4.0
-        sidewalk_points.append([sidewalk_left_x[i], int(y_pos)])
+    for point in left_curve_points:
+        sidewalk_points.append([point[0], point[1]])
+    for point in reversed(right_curve_points):
+        sidewalk_points.append([point[0], point[1]])
     
-    for i in range(len(sidewalk_right_x) - 1, -1, -1):
-        y_pos = height - i * (height - vanishing_y) / 4.0
-        sidewalk_points.append([sidewalk_right_x[i], int(y_pos)])
-    
+    # Convert to proper format for fillPoly
     sidewalk_poly = np.array([sidewalk_points], dtype=np.int32)
     
-    # Draw sidewalk with more natural coloring
-    cv2.fillPoly(overlay, sidewalk_poly, (0, 150, 0))  # Darker green for better visibility
+    # Draw the filled sidewalk
+    cv2.fillPoly(overlay, sidewalk_poly, (0, 150, 0))
     
     # Add distance markers on the sidewalk with perspective
     for i in range(1, 6):
         y_pos = height - int((height - vanishing_y) * i / 5)
-        ratio = i / 5.0
-        left_idx = min(int(ratio * (len(sidewalk_left_x) - 1)), len(sidewalk_left_x) - 1)
-        right_idx = min(int(ratio * (len(sidewalk_right_x) - 1)), len(sidewalk_right_x) - 1)
-        left_x = sidewalk_left_x[left_idx]
-        right_x = sidewalk_right_x[right_idx]
-        cv2.line(overlay, (left_x, y_pos), (right_x, y_pos), (255, 255, 255), max(1, 3 - i//2))
+        # Find the x positions at this y-level by interpolating the curve points
+        left_x = None
+        right_x = None
+        
+        for j in range(len(left_curve_points) - 1):
+            if left_curve_points[j][1] >= y_pos >= left_curve_points[j+1][1]:
+                y1, y2 = left_curve_points[j][1], left_curve_points[j+1][1]
+                x1, x2 = left_curve_points[j][0], left_curve_points[j+1][0]
+                # Linear interpolation
+                left_x = int(x1 + (y_pos - y1) * (x2 - x1) / (y2 - y1 + 1e-6))
+                break
+        
+        for j in range(len(right_curve_points) - 1):
+            if right_curve_points[j][1] >= y_pos >= right_curve_points[j+1][1]:
+                y1, y2 = right_curve_points[j][1], right_curve_points[j+1][1]
+                x1, x2 = right_curve_points[j][0], right_curve_points[j+1][0]
+                # Linear interpolation
+                right_x = int(x1 + (y_pos - y1) * (x2 - x1) / (y2 - y1 + 1e-6))
+                break
+        
+        # If we found valid x positions, draw the distance marker
+        if left_x is not None and right_x is not None:
+            cv2.line(overlay, (left_x, y_pos), (right_x, y_pos), 
+                     (255, 255, 255), max(1, 3 - i//2))
     
     # Add the overlay with transparency
     cv2.addWeighted(overlay, 0.4, output, 0.6, 0, output)
     
-    # Draw the sidewalk boundaries with a more appealing style
-    for i in range(len(sidewalk_left_x) - 1):
-        y1 = int(height - i * (height - vanishing_y) / 4.0)
-        y2 = int(height - (i+1) * (height - vanishing_y) / 4.0)
-        cv2.line(output, (sidewalk_left_x[i], y1), (sidewalk_left_x[i+1], y2), (0, 0, 255), 3)
-        cv2.line(output, (sidewalk_right_x[i], y1), (sidewalk_right_x[i+1], y2), (0, 0, 255), 3)
+    # Draw the curved sidewalk boundaries
+    for i in range(len(left_curve_points) - 1):
+        cv2.line(output, 
+                 (left_curve_points[i][0], left_curve_points[i][1]), 
+                 (left_curve_points[i+1][0], left_curve_points[i+1][1]), 
+                 (0, 0, 255), 3)
     
-    # Add debug overlay if needed (uncomment to show edge detection)
-    # cv2.addWeighted(debug_image, 0.3, output, 0.7, 0, output)
+    for i in range(len(right_curve_points) - 1):
+        cv2.line(output, 
+                 (right_curve_points[i][0], right_curve_points[i][1]), 
+                 (right_curve_points[i+1][0], right_curve_points[i+1][1]), 
+                 (0, 0, 255), 3)
+    
+    # Add debug overlay if needed
+    cv2.addWeighted(debug_image, 0.3, output, 0.7, 0, output)
     
     return output, (left_boundary, right_boundary)
 
