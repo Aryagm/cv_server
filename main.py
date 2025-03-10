@@ -341,8 +341,10 @@ async def process_frame(frame_data: FrameData):
             elif label_lower == "crosswalk":
                 add_alert(alerts, "Crosswalk ahead!")
 
-    BOUNDARY_WARNING_THRESHOLD = 0.35  # Warn when within 20% of sidewalk width from edge
-
+    BOUNDARY_WARNING_THRESHOLD = 0.2  # Warn when within 20% of sidewalk width from edge
+    last_alert_times = {}
+    ALERT_COOLDOWN = 5  # seconds
+    
 # Modify the user position indicator and guidance section in process_frame
     # Add user position indicator and sidewalk guidance
     if boundaries:
