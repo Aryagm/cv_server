@@ -43,57 +43,66 @@ def add_alert(alerts, alert):
 class FrameData(BaseModel):
     image: str
 
+position_history = deque(maxlen=10)  # Track user position for stability
+
 def detect_sidewalk_boundaries(image):
-    """Detect sidewalk boundaries using a simplified approach with Hough lines."""
+    """Detect sidewalk boundaries using an improved approach with Hough lines."""
     height, width = image.shape[:2]
     output = image.copy()
-        
-    # Process the image to find edges
+    center_x = width / 2
+    
+    # Track current position for movement detection
+    current_position = center_x
+    position_history.append(current_position)
+    
+    # Process the image to find edges - improved parameters
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    blur = cv2.GaussianBlur(gray, (7, 7), 0)  # Increased kernel size for better smoothing
     
-    # Use Canny edge detection
-    edges = cv2.Canny(blur, 50, 150)
+    # Lower threshold for better edge detection in various lighting conditions
+    edges = cv2.Canny(blur, 20, 80)
     
-    # Create mask to focus on sidewalk region
+    # Create a narrower mask to focus on sidewalk region
     mask = np.zeros_like(edges)
     polygon = np.array([[
         (int(width * 0.1), height),
         (int(width * 0.9), height),
-        (int(width * 0.7), int(height * 0.5)),
-        (int(width * 0.3), int(height * 0.5))
+        (int(width * 0.6), int(height * 0.6)),
+        (int(width * 0.4), int(height * 0.6))
     ]], np.int32)
     cv2.fillPoly(mask, polygon, 255)
     masked_edges = cv2.bitwise_and(edges, mask)
     
-    # Find lines using HoughLinesP
+    # Improved Hough parameters for better line detection
     lines = cv2.HoughLinesP(
         masked_edges, 
         rho=1, 
         theta=np.pi/180, 
-        threshold=25, 
-        minLineLength=40, 
+        threshold=30,  # Higher threshold for more reliable lines
+        minLineLength=50,  # Longer lines to filter out noise
         maxLineGap=100
     )
     
     # Group lines for left and right boundaries
     left_lines = []
     right_lines = []
-    center_x = width / 2
+    
+    # Define a threshold y-value for considering horizontal lines
+    threshold_y = int(height * 0.8)  # Only consider lines in the lower part of the image
     
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line[0]
             
-            # Skip nearly horizontal lines
-            if abs(y2 - y1) < 10:
+            # Skip nearly horizontal lines or lines too high in the image
+            if abs(y2 - y1) < 15 or min(y1, y2) < threshold_y:
                 continue
             
             # Calculate slope
             slope = (y2 - y1) / (x2 - x1 + 1e-6)
             
             # Only consider lines with reasonable slope for sidewalk boundaries
-            if abs(slope) > 0.3 and abs(slope) < 10:
+            if 0.3 < abs(slope) < 5:  # Narrowed slope range for more vertical lines
                 # Extend line to bottom of image
                 if y1 != y2:
                     x_bottom = int(x1 + (height - y1) * (x2 - x1) / (y2 - y1))
@@ -115,15 +124,21 @@ def detect_sidewalk_boundaries(image):
     if right_lines:
         right_boundary = int(np.median(right_lines))
     
-    # Apply default boundaries if detection failed
+    # Apply default boundaries if detection failed, using narrower defaults
     if left_boundary is None:
-        left_boundary = int(width * 0.25)
+        left_boundary = int(width * 0.35)  # Moved inward from 0.25
     if right_boundary is None:
-        right_boundary = int(width * 0.75)
+        right_boundary = int(width * 0.65)  # Moved inward from 0.75
     
     # Ensure left is to the left of right
     if left_boundary > right_boundary:
         left_boundary, right_boundary = right_boundary, left_boundary
+    
+    # Apply tighter bounds to prevent unreasonably wide detections
+    if right_boundary - left_boundary > width * 0.5:
+        center = (left_boundary + right_boundary) // 2
+        left_boundary = max(int(width * 0.1), center - int(width * 0.25))
+        right_boundary = min(int(width * 0.9), center + int(width * 0.25))
     
     # Add to boundary history
     boundary_history.append((left_boundary, right_boundary))
@@ -131,7 +146,7 @@ def detect_sidewalk_boundaries(image):
     # Use a weighted average of recent boundaries for smoothness
     if len(boundary_history) > 1:
         # More weight to recent frames
-        weights = [0.1, 0.15, 0.2, 0.25, 0.3][:len(boundary_history)]
+        weights = [0.05, 0.1, 0.15, 0.2, 0.5][:len(boundary_history)]
         weights = [w/sum(weights) for w in weights]
         
         # Calculate weighted average
@@ -140,14 +155,13 @@ def detect_sidewalk_boundaries(image):
         
         left_boundary, right_boundary = left_avg, right_avg
     
-    # Create an enhanced visualization of the sidewalk
-    # 1. Create a semi-transparent polygon overlay
+    # Rest of the function for visualization remains the same
     overlay = output.copy()
     sidewalk_points = np.array([
         [left_boundary, height],
         [right_boundary, height],
-        [int(right_boundary * 0.7 + width * 0.3 * 0.3), int(height * 0.5)],
-        [int(left_boundary * 0.7 + width * 0.1 * 0.3), int(height * 0.5)]
+        [int(right_boundary * 0.8 + width * 0.2 * 0.2), int(height * 0.6)],
+        [int(left_boundary * 0.8 + width * 0.1 * 0.2), int(height * 0.6)]
     ], np.int32).reshape((-1, 1, 2))
     
     # Create gradient color effect for the sidewalk
@@ -155,10 +169,10 @@ def detect_sidewalk_boundaries(image):
     
     # Add distance markers on the sidewalk
     for i in range(1, 6):
-        y_pos = height - int((height * 0.5) * i / 5)
+        y_pos = height - int((height * 0.4) * i / 5)
         ratio = i / 5
-        left_x = int(left_boundary * (1 - ratio) + ratio * (left_boundary * 0.7 + width * 0.1 * 0.3))
-        right_x = int(right_boundary * (1 - ratio) + ratio * (right_boundary * 0.7 + width * 0.3 * 0.3))
+        left_x = int(left_boundary * (1 - ratio) + ratio * (left_boundary * 0.8 + width * 0.1 * 0.2))
+        right_x = int(right_boundary * (1 - ratio) + ratio * (right_boundary * 0.8 + width * 0.2 * 0.2))
         cv2.line(overlay, (left_x, y_pos), (right_x, y_pos), (255, 255, 255), 2)
     
     # Add the overlay with transparency
@@ -166,13 +180,14 @@ def detect_sidewalk_boundaries(image):
     
     # Draw the sidewalk boundaries with a more appealing style
     cv2.line(output, (left_boundary, height), 
-             (int(left_boundary * 0.7 + width * 0.1 * 0.3), int(height * 0.5)), 
+             (int(left_boundary * 0.8 + width * 0.1 * 0.2), int(height * 0.6)), 
              (0, 0, 255), 3)
     cv2.line(output, (right_boundary, height), 
-             (int(right_boundary * 0.7 + width * 0.3 * 0.3), int(height * 0.5)), 
+             (int(right_boundary * 0.8 + width * 0.2 * 0.2), int(height * 0.6)), 
              (0, 0, 255), 3)
     
     return output, (left_boundary, right_boundary)
+
 
 @app.post("/process_frame/")
 async def process_frame(frame_data: FrameData):
