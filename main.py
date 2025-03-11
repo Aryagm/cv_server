@@ -342,7 +342,7 @@ async def process_frame(frame_data: FrameData):
             elif label_lower == "crosswalk":
                 add_alert(alerts, "Crosswalk ahead!")
 
-    BOUNDARY_WARNING_THRESHOLD = 0.35  # Warn when within 20% of sidewalk width from edge
+    BOUNDARY_WARNING_THRESHOLD = 0.30  # Warn when within 20% of sidewalk width from edge
     
 # Modify the user position indicator and guidance section in process_frame
     # Add user position indicator and sidewalk guidance
@@ -404,12 +404,12 @@ async def process_frame(frame_data: FrameData):
             #                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
         if near_left_boundary:
             # Warning alert for approaching left boundary
-            add_alert(alerts, "Caution: Getting close to edge")
+            add_alert(alerts, "WARNING: You might be going off the sidewalk!")
             cv2.putText(processed_img, "DRIFT", (width//2 - 80, height - 80),
                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
         elif near_right_boundary:
             # Warning alert for approaching right boundary
-            add_alert(alerts, "Caution: Getting close to edge")
+            add_alert(alerts, "WARNING: You might be going off the sidewalk!")
             cv2.putText(processed_img, "DRIFT ", (width//2 - 80, height - 80),
                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
 
