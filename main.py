@@ -25,17 +25,18 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
 MODEL = YOLO("yolo11n.pt")
 
-# Global dictionary to store the last timestamp for each alert
-last_alert_times = {}
-ALERT_COOLDOWN = 10  # seconds
-
 # Simple boundary smoothing with a short history
 boundary_history = deque(maxlen=5)
+
+last_alert_times = {}
+ALERT_COOLDOWN = 5  # seconds
 
 def add_alert(alerts, alert):
     """Add an alert only if the last same alert was sent more than ALERT_COOLDOWN seconds ago."""
     current_time = time.time()
-    if current_time - last_alert_times.get(alert, 0) >= ALERT_COOLDOWN:
+    last_time = last_alert_times.get(alert, 0)
+    
+    if current_time - last_time >= ALERT_COOLDOWN:
         last_alert_times[alert] = current_time
         alerts.append(alert)
 
@@ -341,9 +342,7 @@ async def process_frame(frame_data: FrameData):
             elif label_lower == "crosswalk":
                 add_alert(alerts, "Crosswalk ahead!")
 
-    BOUNDARY_WARNING_THRESHOLD = 0.2  # Warn when within 20% of sidewalk width from edge
-    last_alert_times = {}
-    ALERT_COOLDOWN = 5  # seconds
+    BOUNDARY_WARNING_THRESHOLD = 0.25  # Warn when within 20% of sidewalk width from edge
     
 # Modify the user position indicator and guidance section in process_frame
     # Add user position indicator and sidewalk guidance
