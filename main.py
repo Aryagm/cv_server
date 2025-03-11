@@ -342,7 +342,7 @@ async def process_frame(frame_data: FrameData):
             elif label_lower == "crosswalk":
                 add_alert(alerts, "Crosswalk ahead!")
 
-    BOUNDARY_WARNING_THRESHOLD = 0.25  # Warn when within 20% of sidewalk width from edge
+    BOUNDARY_WARNING_THRESHOLD = 0.35  # Warn when within 20% of sidewalk width from edge
     
 # Modify the user position indicator and guidance section in process_frame
     # Add user position indicator and sidewalk guidance
@@ -391,17 +391,17 @@ async def process_frame(frame_data: FrameData):
         cv2.putText(processed_img, position_text, (width//2 - 80, height - 40),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
-        # Add directional guidance based on position
-        # if off_sidewalk:
-        #     # Critical alert for off sidewalk
-        #     add_alert(alerts, "WARNING: You are off the sidewalk!")
+        #Add directional guidance based on position
+        if off_sidewalk:
+            # Critical alert for off sidewalk
+            add_alert(alerts, "WARNING: You might be going off the sidewalk!")
             
-        #     if user_point[0] < left_boundary:
-        #         cv2.putText(processed_img, "MOVE RIGHT", (width//2 - 80, height - 80),
-        #                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
-        #     else:
-        #         cv2.putText(processed_img, "MOVE LEFT", (width//2 - 80, height - 80),
-        #                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+            # if user_point[0] < left_boundary:
+            #     cv2.putText(processed_img, "MOVE RIGHT", (width//2 - 80, height - 80),
+            #                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+            # else:
+            #     cv2.putText(processed_img, "MOVE LEFT", (width//2 - 80, height - 80),
+            #                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
         if near_left_boundary:
             # Warning alert for approaching left boundary
             add_alert(alerts, "Caution: Getting close to left edge")
