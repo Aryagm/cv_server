@@ -124,31 +124,31 @@ def detect_sidewalk_boundaries(image):
         left_candidates.sort()
         
         # Check if we have clusters of lines
-        if len(left_candidates) >= 3:
-            # Extract x positions
-            left_x = [p[0] for p in left_candidates]
+        # if len(left_candidates) >= 3:
+        #     # Extract x positions
+        #     left_x = [p[0] for p in left_candidates]
             
-            # Use DBSCAN clustering to find the most consistent group
-            from sklearn.cluster import DBSCAN
-            try:
-                # Simple clustering - can be replaced with manual approach if needed
-                clustering = DBSCAN(eps=width*0.1, min_samples=2).fit(np.array(left_x).reshape(-1, 1))
-                if len(set(clustering.labels_)) > 1:  # If we found clusters
-                    # Find the largest cluster
-                    largest_cluster = max(set(clustering.labels_), key=list(clustering.labels_).count)
-                    if largest_cluster != -1:  # -1 is noise
-                        cluster_points = [left_x[i] for i, label in enumerate(clustering.labels_) if label == largest_cluster]
-                        left_boundary = int(np.median(cluster_points))
-                    else:
-                        left_boundary = int(np.median(left_x))
-                else:
-                    left_boundary = int(np.median(left_x))
-            except:
-                # Fallback if clustering fails
-                left_boundary = int(np.median(left_x))
-        else:
+        #     # Use DBSCAN clustering to find the most consistent group
+        #     from sklearn.cluster import DBSCAN
+        #     try:
+        #         # Simple clustering - can be replaced with manual approach if needed
+        #         clustering = DBSCAN(eps=width*0.1, min_samples=2).fit(np.array(left_x).reshape(-1, 1))
+        #         if len(set(clustering.labels_)) > 1:  # If we found clusters
+        #             # Find the largest cluster
+        #             largest_cluster = max(set(clustering.labels_), key=list(clustering.labels_).count)
+        #             if largest_cluster != -1:  # -1 is noise
+        #                 cluster_points = [left_x[i] for i, label in enumerate(clustering.labels_) if label == largest_cluster]
+        #                 left_boundary = int(np.median(cluster_points))
+        #             else:
+        #                 left_boundary = int(np.median(left_x))
+        #         else:
+        #             left_boundary = int(np.median(left_x))
+        #     except:
+        #         # Fallback if clustering fails
+        #         left_boundary = int(np.median(left_x))
+        # else:
             # Just take the median if few points
-            left_boundary = int(np.median([p[0] for p in left_candidates]))
+        left_boundary = int(np.median([p[0] for p in left_candidates]))
     
     # Process right candidates
     if right_candidates:
@@ -156,31 +156,31 @@ def detect_sidewalk_boundaries(image):
         right_candidates.sort()
         
         # Check if we have clusters of lines
-        if len(right_candidates) >= 3:
-            # Extract x positions
-            right_x = [p[0] for p in right_candidates]
+        # if len(right_candidates) >= 3:
+        #     # Extract x positions
+        #     right_x = [p[0] for p in right_candidates]
             
-            # Use DBSCAN clustering to find the most consistent group
-            from sklearn.cluster import DBSCAN
-            try:
-                # Simple clustering - can be replaced with manual approach if needed
-                clustering = DBSCAN(eps=width*0.1, min_samples=2).fit(np.array(right_x).reshape(-1, 1))
-                if len(set(clustering.labels_)) > 1:  # If we found clusters
-                    # Find the largest cluster
-                    largest_cluster = max(set(clustering.labels_), key=list(clustering.labels_).count)
-                    if largest_cluster != -1:  # -1 is noise
-                        cluster_points = [right_x[i] for i, label in enumerate(clustering.labels_) if label == largest_cluster]
-                        right_boundary = int(np.median(cluster_points))
-                    else:
-                        right_boundary = int(np.median(right_x))
-                else:
-                    right_boundary = int(np.median(right_x))
-            except:
-                # Fallback if clustering fails
-                right_boundary = int(np.median(right_x))
-        else:
+        #     # Use DBSCAN clustering to find the most consistent group
+        #     from sklearn.cluster import DBSCAN
+        #     try:
+        #         # Simple clustering - can be replaced with manual approach if needed
+        #         clustering = DBSCAN(eps=width*0.1, min_samples=2).fit(np.array(right_x).reshape(-1, 1))
+        #         if len(set(clustering.labels_)) > 1:  # If we found clusters
+        #             # Find the largest cluster
+        #             largest_cluster = max(set(clustering.labels_), key=list(clustering.labels_).count)
+        #             if largest_cluster != -1:  # -1 is noise
+        #                 cluster_points = [right_x[i] for i, label in enumerate(clustering.labels_) if label == largest_cluster]
+        #                 right_boundary = int(np.median(cluster_points))
+        #             else:
+        #                 right_boundary = int(np.median(right_x))
+        #         else:
+        #             right_boundary = int(np.median(right_x))
+        #     except:
+        #         # Fallback if clustering fails
+        #         right_boundary = int(np.median(right_x))
+        # else:
             # Just take the median if few points
-            right_boundary = int(np.median([p[0] for p in right_candidates]))
+        right_boundary = int(np.median([p[0] for p in right_candidates]))
     
     # Handle cases where only one boundary is detected
     if left_boundary is not None and right_boundary is None:
@@ -336,11 +336,11 @@ async def process_frame(frame_data: FrameData):
             
             # Add relevant alerts
             if label_lower in ["person", "car", "truck", "bus", "motorcycle", "bicycle"]:
-                add_alert(alerts, f"{label} ahead!")
+                add_alert(alerts, f"{label} ahead.")
             elif label_lower in ["traffic sign", "stop sign"]:
-                add_alert(alerts, "Sign detected!")
+                add_alert(alerts, "Sign detected.")
             elif label_lower == "crosswalk":
-                add_alert(alerts, "Crosswalk ahead!")
+                add_alert(alerts, "Crosswalk ahead.")
 
     BOUNDARY_WARNING_THRESHOLD = 0.30  # Warn when within 20% of sidewalk width from edge
     
@@ -394,7 +394,7 @@ async def process_frame(frame_data: FrameData):
         #Add directional guidance based on position
         if off_sidewalk:
             # Critical alert for off sidewalk
-            add_alert(alerts, "WARNING: You might be going off the sidewalk")
+            add_alert(alerts, "WARNING: You might be going off the sidewalk.")
             
             # if user_point[0] < left_boundary:
             #     cv2.putText(processed_img, "MOVE RIGHT", (width//2 - 80, height - 80),
@@ -404,12 +404,12 @@ async def process_frame(frame_data: FrameData):
             #                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
         if near_left_boundary:
             # Warning alert for approaching left boundary
-            add_alert(alerts, "WARNING: You might be going off the sidewalk")
+            add_alert(alerts, "WARNING: You might be going off the sidewalk.")
             cv2.putText(processed_img, "DRIFT", (width//2 - 80, height - 80),
                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
         elif near_right_boundary:
             # Warning alert for approaching right boundary
-            add_alert(alerts, "WARNING: You might be going off the sidewalk")
+            add_alert(alerts, "WARNING: You might be going off the sidewalk.")
             cv2.putText(processed_img, "DRIFT ", (width//2 - 80, height - 80),
                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
 
