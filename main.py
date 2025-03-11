@@ -394,7 +394,7 @@ async def process_frame(frame_data: FrameData):
         #Add directional guidance based on position
         if off_sidewalk:
             # Critical alert for off sidewalk
-            add_alert(alerts, "WARNING: You might be going off the sidewalk!")
+            add_alert(alerts, "WARNING: You might be going off the sidewalk")
             
             # if user_point[0] < left_boundary:
             #     cv2.putText(processed_img, "MOVE RIGHT", (width//2 - 80, height - 80),
@@ -404,12 +404,12 @@ async def process_frame(frame_data: FrameData):
             #                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
         if near_left_boundary:
             # Warning alert for approaching left boundary
-            add_alert(alerts, "WARNING: You might be going off the sidewalk!")
+            add_alert(alerts, "WARNING: You might be going off the sidewalk")
             cv2.putText(processed_img, "DRIFT", (width//2 - 80, height - 80),
                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
         elif near_right_boundary:
             # Warning alert for approaching right boundary
-            add_alert(alerts, "WARNING: You might be going off the sidewalk!")
+            add_alert(alerts, "WARNING: You might be going off the sidewalk")
             cv2.putText(processed_img, "DRIFT ", (width//2 - 80, height - 80),
                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
 
