@@ -289,6 +289,7 @@ def detect_sidewalk_boundaries(image):
 
 @app.post("/process_frame/")
 async def process_frame(frame_data: FrameData):
+    start_time = time.time()
     image_data = frame_data.image
     if not image_data:
         raise HTTPException(status_code=400, detail="No image provided")
@@ -416,6 +417,8 @@ async def process_frame(frame_data: FrameData):
     # Encode the processed image to base64
     _, buffer = cv2.imencode('.jpg', processed_img)
     processed_img_base64 = base64.b64encode(buffer).decode('utf-8')
+    elapsed_time = time.time() - start_time
+    print(f"Request processed in {elapsed_time:.3f} seconds")
 
     return {
         "alerts": alerts,
@@ -424,4 +427,4 @@ async def process_frame(frame_data: FrameData):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_config=None)
